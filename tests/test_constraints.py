@@ -204,20 +204,14 @@ def test_load_constraints_all_types():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_pass():
-    constraints = [
-        TestSuiteConstraint(command="true", timeout=10),
-    ]
-    report = run_all_constraints(constraints)
+def test_run_all_outcomes():
+    report = run_all_constraints([TestSuiteConstraint(command="true", timeout=10)])
     assert report.all_passed is True
 
-
-def test_run_all_with_failure():
     constraints = [
         TestSuiteConstraint(command="true", timeout=10),
         TestSuiteConstraint(command="false", timeout=10),
     ]
-    # Override name to distinguish
     constraints[1].name = "test_suite_2"
     report = run_all_constraints(constraints)
     assert report.all_passed is False

@@ -35,31 +35,25 @@ def test_constraint_result_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_constraint_report_summary():
-    report = ConstraintReport()
-    report.results = [
+def test_constraint_report_summaries():
+    failing_report = ConstraintReport()
+    failing_report.results = [
         ConstraintResult(name="a", passed=True, duration_seconds=1.0, message="ok"),
         ConstraintResult(name="b", passed=False, duration_seconds=2.0, message="fail"),
     ]
-    report.all_passed = False
-    report.total_duration = 3.0
+    failing_report.all_passed = False
+    failing_report.total_duration = 3.0
 
-    summary = report.summary()
+    summary = failing_report.summary()
     assert "[PASS] a" in summary
     assert "[FAIL] b" in summary
     assert "[FAIL] total" in summary
 
-
-def test_constraint_report_all_pass():
-    report = ConstraintReport()
-    report.results = [
-        ConstraintResult(name="a", passed=True, duration_seconds=0.5),
-    ]
-    report.all_passed = True
-    report.total_duration = 0.5
-
-    summary = report.summary()
-    assert "[PASS] total" in summary
+    passing_report = ConstraintReport()
+    passing_report.results = [ConstraintResult(name="a", passed=True, duration_seconds=0.5)]
+    passing_report.all_passed = True
+    passing_report.total_duration = 0.5
+    assert "[PASS] total" in passing_report.summary()
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,9 @@ Autoresearch, but for reducing code. Credit goes to https://github.com/karpathy/
 Copy autoreduce to your project directory, set up uv, and prompt it with anything that points to program.md.
 
 ```bash
+git clone https://github.com/bekerk/autoreduce.git
+cd autoreduce
+rm -rf .git # from autoreduce
 uv sync # set up venv
 ```
 

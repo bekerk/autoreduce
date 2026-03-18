@@ -605,17 +605,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load config
-    try:
-        import yaml
-
-        with open(args.config) as f:
-            config = yaml.safe_load(f)
-    except ImportError:
-        print("PyYAML not installed. Install with: pip install pyyaml")
-        sys.exit(1)
-    except FileNotFoundError:
-        print(f"Config file not found: {args.config}")
-        sys.exit(1)
+    with open(args.config) as f:
+        config = yaml.safe_load(f)
     constraints = load_constraints(config, workdir=args.workdir)
 
     if args.check != "all":

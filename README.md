@@ -33,3 +33,13 @@ do
   sleep 60
 done
 ```
+
+Or for codex:
+
+```bash
+while true
+do
+  codex --yolo exec "run program.md, setup if needed, if not continue from the ## Loop section"
+  sleep 60
+done
+```

@@ -35,31 +35,25 @@ def test_constraint_result_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_constraint_report_summary():
-    report = ConstraintReport()
-    report.results = [
+def test_constraint_report_summaries():
+    failing_report = ConstraintReport()
+    failing_report.results = [
         ConstraintResult(name="a", passed=True, duration_seconds=1.0, message="ok"),
         ConstraintResult(name="b", passed=False, duration_seconds=2.0, message="fail"),
     ]
-    report.all_passed = False
-    report.total_duration = 3.0
+    failing_report.all_passed = False
+    failing_report.total_duration = 3.0
 
-    summary = report.summary()
+    summary = failing_report.summary()
     assert "[PASS] a" in summary
     assert "[FAIL] b" in summary
     assert "[FAIL] total" in summary
 
-
-def test_constraint_report_all_pass():
-    report = ConstraintReport()
-    report.results = [
-        ConstraintResult(name="a", passed=True, duration_seconds=0.5),
-    ]
-    report.all_passed = True
-    report.total_duration = 0.5
-
-    summary = report.summary()
-    assert "[PASS] total" in summary
+    passing_report = ConstraintReport()
+    passing_report.results = [ConstraintResult(name="a", passed=True, duration_seconds=0.5)]
+    passing_report.all_passed = True
+    passing_report.total_duration = 0.5
+    assert "[PASS] total" in passing_report.summary()
 
 
 # ---------------------------------------------------------------------------
@@ -67,24 +61,18 @@ def test_constraint_report_all_pass():
 # ---------------------------------------------------------------------------
 
 
-def test_test_suite_pass():
-    c = TestSuiteConstraint(command="echo hello", timeout=10)
-    result = c.check()
-    assert result.passed is True
-    assert result.name == "test_suite"
+def test_test_suite_outcomes():
+    cases = [
+        ("echo hello", 10, True, ""),
+        ("false", 10, False, ""),
+        ("sleep 10", 1, False, "TIMEOUT"),
+    ]
 
-
-def test_test_suite_fail():
-    c = TestSuiteConstraint(command="false", timeout=10)
-    result = c.check()
-    assert result.passed is False
-
-
-def test_test_suite_timeout():
-    c = TestSuiteConstraint(command="sleep 10", timeout=1)
-    result = c.check()
-    assert result.passed is False
-    assert "TIMEOUT" in result.message
+    for command, timeout, passed, message in cases:
+        result = TestSuiteConstraint(command=command, timeout=timeout).check()
+        assert result.passed is passed
+        assert result.name == "test_suite"
+        assert message in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -92,26 +80,30 @@ def test_test_suite_timeout():
 # ---------------------------------------------------------------------------
 
 
-def test_spec_all_pass():
-    specs = [
-        {"name": "check1", "command": "true"},
-        {"name": "check2", "command": "echo ok"},
+def test_spec_outcomes():
+    cases = [
+        (
+            [
+                {"name": "check1", "command": "true"},
+                {"name": "check2", "command": "echo ok"},
+            ],
+            True,
+            "2/2",
+        ),
+        (
+            [
+                {"name": "good", "command": "true"},
+                {"name": "bad", "command": "false"},
+            ],
+            False,
+            "1/2",
+        ),
     ]
-    c = SpecConstraint(specs=specs, timeout=10)
-    result = c.check()
-    assert result.passed is True
-    assert "2/2" in result.message
 
-
-def test_spec_partial_fail():
-    specs = [
-        {"name": "good", "command": "true"},
-        {"name": "bad", "command": "false"},
-    ]
-    c = SpecConstraint(specs=specs, timeout=10)
-    result = c.check()
-    assert result.passed is False
-    assert "1/2" in result.message
+    for specs, passed, message in cases:
+        result = SpecConstraint(specs=specs, timeout=10).check()
+        assert result.passed is passed
+        assert message in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -206,20 +198,14 @@ def test_load_constraints_all_types():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_pass():
-    constraints = [
-        TestSuiteConstraint(command="true", timeout=10),
-    ]
-    report = run_all_constraints(constraints)
+def test_run_all_outcomes():
+    report = run_all_constraints([TestSuiteConstraint(command="true", timeout=10)])
     assert report.all_passed is True
 
-
-def test_run_all_with_failure():
     constraints = [
         TestSuiteConstraint(command="true", timeout=10),
         TestSuiteConstraint(command="false", timeout=10),
     ]
-    # Override name to distinguish
     constraints[1].name = "test_suite_2"
     report = run_all_constraints(constraints)
     assert report.all_passed is False

@@ -4,6 +4,7 @@ These tests are the constraint boundary - they must all pass
 after every code change during the reduction loop.
 """
 
+import ast
 import json
 import os
 import sys
@@ -35,30 +36,19 @@ from measure import (
 # ---------------------------------------------------------------------------
 
 
-def test_file_metrics_defaults():
-    fm = FileMetrics(path="test.py")
-    assert fm.path == "test.py"
-    assert fm.lines_of_code == 0
-    assert fm.blank_lines == 0
-    assert fm.comment_lines == 0
-    assert fm.total_lines == 0
+def test_metric_dataclasses():
+    file_metrics = FileMetrics(path="test.py")
+    assert file_metrics.path == "test.py"
+    assert file_metrics.lines_of_code == 0
+    assert file_metrics.blank_lines == 0
+    assert file_metrics.comment_lines == 0
+    assert file_metrics.total_lines == 0
+    assert FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2).total_lines == 15
 
-
-def test_file_metrics_total_lines():
-    fm = FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2)
-    assert fm.total_lines == 15
-
-
-# ---------------------------------------------------------------------------
-# ProjectMetrics dataclass
-# ---------------------------------------------------------------------------
-
-
-def test_project_metrics_defaults():
-    pm = ProjectMetrics()
-    assert pm.num_files == 0
-    assert pm.composite_score == 0.0
-    assert pm.total_lines_of_code == 0
+    project_metrics = ProjectMetrics()
+    assert project_metrics.num_files == 0
+    assert project_metrics.composite_score == 0.0
+    assert project_metrics.total_lines_of_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -66,43 +56,23 @@ def test_project_metrics_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_visitor_simple():
-    """A function with no branches has complexity 1."""
-    import ast
+def test_visitor_counts():
+    cases = [
+        ("def foo():\n    return 1\n", 1, 1, 0),
+        ("def foo(x):\n    if x:\n        return 1\n    return 0\n", 2, 1, 0),
+        ("for i in range(10):\n    print(i)\n", 2, 0, 0),
+        ("class Foo:\n    def bar(self):\n        pass\n", 1, 1, 1),
+    ]
 
-    source = "def foo():\n    return 1\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 1
-    assert v.num_functions == 1
-
-
-def test_visitor_if_branch():
-    """An if statement adds 1 to complexity."""
-    import ast
-
-    source = "def foo(x):\n    if x:\n        return 1\n    return 0\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 2  # base 1 + 1 if
-    assert v.num_functions == 1
-
-
-def test_visitor_for_loop():
-    import ast
-
-    source = "for i in range(10):\n    print(i)\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 2  # base 1 + 1 for
+    for source, complexity, num_functions, num_classes in cases:
+        visitor = PythonComplexityVisitor()
+        visitor.visit(ast.parse(source))
+        assert visitor.complexity == complexity
+        assert visitor.num_functions == num_functions
+        assert visitor.num_classes == num_classes
 
 
 def test_visitor_nesting():
-    import ast
-
     source = textwrap.dedent("""\
         def foo():
             if True:
@@ -116,17 +86,6 @@ def test_visitor_nesting():
     assert v.max_depth >= 3  # function > if > for > if
 
 
-def test_visitor_class():
-    import ast
-
-    source = "class Foo:\n    def bar(self):\n        pass\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.num_classes == 1
-    assert v.num_functions == 1
-
-
 # ---------------------------------------------------------------------------
 # analyze_python_file
 # ---------------------------------------------------------------------------
@@ -134,24 +93,24 @@ def test_visitor_class():
 
 def test_analyze_python_file():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(
-            textwrap.dedent("""\
-            import os
-            import sys
-
-            # A comment
-            def hello():
-                if True:
-                    print("hello")
-
-            class Foo:
-                pass
-        """)
-        )
-        f.flush()
         path = f.name
 
     try:
+        with open(path, "w") as f:
+            f.write(
+                textwrap.dedent("""\
+                import os
+                import sys
+
+                # A comment
+                def hello():
+                    if True:
+                        print("hello")
+
+                class Foo:
+                    pass
+            """)
+            )
         fm = analyze_python_file(path)
         assert fm.lines_of_code > 0
         assert fm.num_imports == 2
@@ -159,19 +118,10 @@ def test_analyze_python_file():
         assert fm.num_classes == 1
         assert fm.comment_lines >= 1
         assert fm.cyclomatic_complexity >= 2  # base + if
-    finally:
-        os.unlink(path)
 
-
-def test_analyze_python_file_empty():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write("")
-        f.flush()
-        path = f.name
-
-    try:
-        fm = analyze_python_file(path)
-        assert fm.lines_of_code == 0
+        with open(path, "w") as f:
+            f.write("")
+        assert analyze_python_file(path).lines_of_code == 0
     finally:
         os.unlink(path)
 
@@ -181,7 +131,7 @@ def test_analyze_python_file_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_detect_language():
+def test_measure_helpers():
     assert _detect_language("foo.py") == "python"
     assert _detect_language("bar.js") == "javascript"
     assert _detect_language("baz.ts") == "typescript"
@@ -190,36 +140,20 @@ def test_detect_language():
     assert _detect_language("readme.md") is None
     assert _detect_language("data.json") is None
 
-
-# ---------------------------------------------------------------------------
-# Regex helpers
-# ---------------------------------------------------------------------------
-
-
-def test_regex_cyclomatic():
     source = "if x:\n    for y in z:\n        while True:\n            pass"
-    cc = _regex_cyclomatic(source)
-    assert cc >= 4  # base + if + for + while
-
-
-def test_regex_nesting():
-    lines = [
-        "def foo():",
-        "    if True:",
-        "        for i in x:",
-        "            pass",
-        "",
-    ]
-    depth = _regex_nesting(lines)
-    assert depth >= 2
-
-
-# ---------------------------------------------------------------------------
-# should_skip
-# ---------------------------------------------------------------------------
-
-
-def test_should_skip():
+    assert _regex_cyclomatic(source) >= 4  # base + if + for + while
+    assert (
+        _regex_nesting(
+            [
+                "def foo():",
+                "    if True:",
+                "        for i in x:",
+                "            pass",
+                "",
+            ]
+        )
+        >= 2
+    )
     assert should_skip(".git/config") is True
     assert should_skip("node_modules/foo/bar.js") is True
     assert should_skip("__pycache__/foo.pyc") is True
@@ -321,7 +255,7 @@ def test_measure_project_custom_weights():
 # ---------------------------------------------------------------------------
 
 
-def test_format_report():
+def test_formatters():
     pm = ProjectMetrics()
     pm.composite_score = 123.45
     pm.total_lines_of_code = 100
@@ -330,15 +264,9 @@ def test_format_report():
     assert "composite_score:" in report
     assert "123.45" in report
 
-
-def test_format_json():
-    pm = ProjectMetrics()
-    pm.composite_score = 99.9
-    pm.total_lines_of_code = 50
-    j = format_json(pm)
-    data = json.loads(j)
-    assert data["composite_score"] == 99.9
-    assert data["lines_of_code"] == 50
+    data = json.loads(format_json(pm))
+    assert data["composite_score"] == 123.45
+    assert data["lines_of_code"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -346,28 +274,22 @@ def test_format_json():
 # ---------------------------------------------------------------------------
 
 
-def test_duplicate_ratio_no_duplicates():
+def test_duplicate_ratio():
     with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "a.py"), "w") as f:
-            f.write("def unique_function_a():\n    return 'only in a'\n")
-        with open(os.path.join(tmpdir, "b.py"), "w") as f:
-            f.write("def unique_function_b():\n    return 'only in b'\n")
+        a_path = os.path.join(tmpdir, "a.py")
+        b_path = os.path.join(tmpdir, "b.py")
 
-        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
-        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
-        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        with open(a_path, "w") as f:
+            f.write("def unique_function_a():\n    return 'only in a'\n")
+        with open(b_path, "w") as f:
+            f.write("def unique_function_b():\n    return 'only in b'\n")
+        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
         assert ratio == 0.0
 
-
-def test_duplicate_ratio_with_duplicates():
-    with tempfile.TemporaryDirectory() as tmpdir:
         shared_code = "def shared_func():\n    return 'this is duplicated across files'\n"
-        with open(os.path.join(tmpdir, "a.py"), "w") as f:
+        with open(a_path, "w") as f:
             f.write(shared_code)
-        with open(os.path.join(tmpdir, "b.py"), "w") as f:
+        with open(b_path, "w") as f:
             f.write(shared_code)
-
-        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
-        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
-        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
         assert ratio > 0.0

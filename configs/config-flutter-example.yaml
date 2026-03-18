@@ -1,0 +1,59 @@
+# autoreduce config for Flutter / Dart projects
+#
+# Targets lib/ by default. Excludes generated code (*.g.dart, *.freezed.dart).
+# Constraints: flutter test + flutter analyze.
+
+target_dir: "lib"
+
+include:
+  - "**/*.dart"
+
+exclude:
+  - "**/*.g.dart" # json_serializable, built_value, etc.
+  - "**/*.freezed.dart" # freezed generated
+  - "**/*.gr.dart" # auto_route generated
+  - "**/*.mocks.dart" # mockito generated
+  - "**/*.config.dart" # injectable generated
+  - "**/generated/**" # any generated directory
+  - "**/l10n/**" # localization generated
+  - "**/*.gen.dart" # other codegen
+
+aggressiveness: aggressive
+
+constraints:
+  test_suite:
+    command: "flutter test"
+    timeout: 300
+
+  specs:
+    - name: analyze
+      command: "flutter analyze --no-fatal-infos"
+    # Uncomment for stricter checks:
+    # - name: build_android
+    #   command: "flutter build apk --debug"
+    # - name: build_ios
+    #   command: "flutter build ios --no-codesign --debug"
+    # - name: custom_lint
+    #   command: "dart run custom_lint"
+
+  # Snapshot the public API surface (optional but recommended)
+  # snapshots:
+  #   - name: help
+  #     command: "dart run bin/main.dart --help"
+
+metric:
+  weights:
+    lines_of_code: 1.0
+    cyclomatic_complexity: 2.0
+    nesting_depth: 3.0 # Flutter widget trees can get deeply nested
+    num_functions: 0.5
+    num_classes: 0.5
+    num_files: 1.0
+    total_imports: 0.3
+    duplicate_ratio: 5.0
+
+loop:
+  attempt_timeout: 600
+  stagnation_threshold: 15
+  stagnation_strategy: escalate
+  branch_prefix: "autoreduce"

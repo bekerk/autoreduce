@@ -1,0 +1,9 @@
+results.tsv
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+config.yaml
+results.tsv
+.autoreduce
+.coverage

@@ -1,0 +1,93 @@
+# autoreduce - annotated config template
+#
+# Not a working config. Placeholder values throughout.
+# The agent uses this as a reference when generating config.yaml for a project.
+# Also useful for humans writing configs by hand.
+# See configs/* for real examples.
+#
+# Do not modify this file. The agent writes config.yaml, not this.
+
+# where the code lives. "." if autoreduce is inside the project
+target_dir: "path/to/your/project"
+
+# glob patterns to include. empty = all recognized source files
+include:
+  - "your-source-dir/**/*.your-ext" # e.g. "src/**/*.py", "lib/**/*.ts"
+
+# glob patterns to exclude. tests, generated code, vendored deps, etc
+exclude:
+  - "your-test-dir/**" # e.g. "tests/**", "spec/**", "__tests__/**"
+  - "**/test_*.your-ext" # test file naming convention
+  - "some-generated-dir/**" # generated or vendored code
+  - "autoreduce/**" # never reduce the reducer itself
+
+# how bold the agent should be. pick one:
+#   conservative - dead code removal, unused imports, trivial inlining, deduplication
+#   moderate     - above + simplify abstractions, flatten inheritance, merge small modules
+#   aggressive   - above + rewrite algorithms, change data structures, restructure modules
+aggressiveness: conservative | moderate | aggressive
+
+# what must hold after every change
+constraints:
+  # test suite, must exit 0
+  test_suite:
+    command: "your test command" # e.g. "npm test", "cargo test", "mix test"
+    timeout: 300 # seconds before kill
+
+  # extra commands that must exit 0 (typecheck, lint, build, etc)
+  specs:
+    - name: give-it-a-name # e.g. "typecheck", "lint", "build"
+      command: "your command" # e.g. "mypy src/", "eslint .", "make build"
+    # - name: another-check
+    #   command: "another command"
+
+  # capture stdout before reduction, verify it stays identical
+  # useful for cli output, route lists, migration status
+  # snapshots:
+  #   - name: what-this-captures   # e.g. "help-output", "route-list"
+  #     command: "command whose output must not change"
+
+  # allow the agent to simplify test files too (remove redundant assertions,
+  # deduplicate tests, clean up ai-generated noise). coverage must not drop
+  # below the baseline captured at setup time.
+  # disabled by default. set enabled: true to opt in.
+  reduce_tests:
+    enabled: false
+    coverage_command:
+      "your coverage command" # must print a total % line, e.g.
+      # "pytest --cov=src --cov-report=term"
+      # "mix test --cover"
+      # "go test -cover ./..."
+    coverage_pattern:
+      "your-regex" # regex to extract coverage %. must have one capture group.
+      # e.g. "(\d+)%" or "TOTAL\s+\S+\s+\S+\s+(\d+)%"
+    min_delta: 0 # allowed coverage drop in percentage points. 0 = no drop allowed
+
+  spec_timeout: 120 # seconds
+  snapshot_timeout: 60 # seconds
+
+# composite complexity score, lower is better
+# score = sum(weight * raw_metric). set to 0 to ignore a dimension
+metric:
+  weights:
+    lines_of_code: 1.0 # non-blank, non-comment lines
+    cyclomatic_complexity: 2.0 # independent paths through code
+    nesting_depth: 3.0 # deepest nesting across all files
+    num_functions: 0.5 # function/method count
+    num_classes: 0.5 # class/struct/module count
+    num_files: 1.0 # source file count
+    total_imports: 0.3 # import/require/use statements
+    duplicate_ratio: 5.0 # cross-file duplication (0-1, scaled by 1000)
+
+# loop behavior
+loop:
+  attempt_timeout: 600 # max seconds per reduction attempt
+  stagnation_threshold: 15 # consecutive failures before strategy triggers
+
+  # what to do when stuck:
+  #   escalate  - bump aggressiveness level
+  #   diversify - try different approaches at same level
+  #   stop      - halt
+  stagnation_strategy: escalate | diversify | stop
+
+  branch_prefix: "autoreduce" # git branch prefix for experiments

@@ -1,0 +1,373 @@
+"""
+Tests for the measure module.
+These tests are the constraint boundary - they must all pass
+after every code change during the reduction loop.
+"""
+
+import json
+import os
+import sys
+import tempfile
+import textwrap
+
+# Ensure autoreduce modules are importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from measure import (
+    DEFAULT_WEIGHTS,
+    FileMetrics,
+    ProjectMetrics,
+    PythonComplexityVisitor,
+    _detect_language,
+    _regex_cyclomatic,
+    _regex_nesting,
+    analyze_python_file,
+    compute_duplicate_ratio,
+    discover_files,
+    format_json,
+    format_report,
+    measure_project,
+    should_skip,
+)
+
+# ---------------------------------------------------------------------------
+# FileMetrics dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_file_metrics_defaults():
+    fm = FileMetrics(path="test.py")
+    assert fm.path == "test.py"
+    assert fm.lines_of_code == 0
+    assert fm.blank_lines == 0
+    assert fm.comment_lines == 0
+    assert fm.total_lines == 0
+
+
+def test_file_metrics_total_lines():
+    fm = FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2)
+    assert fm.total_lines == 15
+
+
+# ---------------------------------------------------------------------------
+# ProjectMetrics dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_project_metrics_defaults():
+    pm = ProjectMetrics()
+    assert pm.num_files == 0
+    assert pm.composite_score == 0.0
+    assert pm.total_lines_of_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Python complexity visitor
+# ---------------------------------------------------------------------------
+
+
+def test_visitor_simple():
+    """A function with no branches has complexity 1."""
+    import ast
+
+    source = "def foo():\n    return 1\n"
+    tree = ast.parse(source)
+    v = PythonComplexityVisitor()
+    v.visit(tree)
+    assert v.complexity == 1
+    assert v.num_functions == 1
+
+
+def test_visitor_if_branch():
+    """An if statement adds 1 to complexity."""
+    import ast
+
+    source = "def foo(x):\n    if x:\n        return 1\n    return 0\n"
+    tree = ast.parse(source)
+    v = PythonComplexityVisitor()
+    v.visit(tree)
+    assert v.complexity == 2  # base 1 + 1 if
+    assert v.num_functions == 1
+
+
+def test_visitor_for_loop():
+    import ast
+
+    source = "for i in range(10):\n    print(i)\n"
+    tree = ast.parse(source)
+    v = PythonComplexityVisitor()
+    v.visit(tree)
+    assert v.complexity == 2  # base 1 + 1 for
+
+
+def test_visitor_nesting():
+    import ast
+
+    source = textwrap.dedent("""\
+        def foo():
+            if True:
+                for i in range(10):
+                    if i > 5:
+                        pass
+    """)
+    tree = ast.parse(source)
+    v = PythonComplexityVisitor()
+    v.visit(tree)
+    assert v.max_depth >= 3  # function > if > for > if
+
+
+def test_visitor_class():
+    import ast
+
+    source = "class Foo:\n    def bar(self):\n        pass\n"
+    tree = ast.parse(source)
+    v = PythonComplexityVisitor()
+    v.visit(tree)
+    assert v.num_classes == 1
+    assert v.num_functions == 1
+
+
+# ---------------------------------------------------------------------------
+# analyze_python_file
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_python_file():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(
+            textwrap.dedent("""\
+            import os
+            import sys
+
+            # A comment
+            def hello():
+                if True:
+                    print("hello")
+
+            class Foo:
+                pass
+        """)
+        )
+        f.flush()
+        path = f.name
+
+    try:
+        fm = analyze_python_file(path)
+        assert fm.lines_of_code > 0
+        assert fm.num_imports == 2
+        assert fm.num_functions == 1
+        assert fm.num_classes == 1
+        assert fm.comment_lines >= 1
+        assert fm.cyclomatic_complexity >= 2  # base + if
+    finally:
+        os.unlink(path)
+
+
+def test_analyze_python_file_empty():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write("")
+        f.flush()
+        path = f.name
+
+    try:
+        fm = analyze_python_file(path)
+        assert fm.lines_of_code == 0
+    finally:
+        os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Language detection
+# ---------------------------------------------------------------------------
+
+
+def test_detect_language():
+    assert _detect_language("foo.py") == "python"
+    assert _detect_language("bar.js") == "javascript"
+    assert _detect_language("baz.ts") == "typescript"
+    assert _detect_language("qux.rs") == "rust"
+    assert _detect_language("thing.go") == "go"
+    assert _detect_language("readme.md") is None
+    assert _detect_language("data.json") is None
+
+
+# ---------------------------------------------------------------------------
+# Regex helpers
+# ---------------------------------------------------------------------------
+
+
+def test_regex_cyclomatic():
+    source = "if x:\n    for y in z:\n        while True:\n            pass"
+    cc = _regex_cyclomatic(source)
+    assert cc >= 4  # base + if + for + while
+
+
+def test_regex_nesting():
+    lines = [
+        "def foo():",
+        "    if True:",
+        "        for i in x:",
+        "            pass",
+        "",
+    ]
+    depth = _regex_nesting(lines)
+    assert depth >= 2
+
+
+# ---------------------------------------------------------------------------
+# should_skip
+# ---------------------------------------------------------------------------
+
+
+def test_should_skip():
+    assert should_skip(".git/config") is True
+    assert should_skip("node_modules/foo/bar.js") is True
+    assert should_skip("__pycache__/foo.pyc") is True
+    assert should_skip("src/main.py") is False
+    assert should_skip("lib/utils.js") is False
+
+
+# ---------------------------------------------------------------------------
+# discover_files
+# ---------------------------------------------------------------------------
+
+
+def test_discover_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create some files
+        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+            f.write("print('hello')")
+        with open(os.path.join(tmpdir, "utils.py"), "w") as f:
+            f.write("def foo(): pass")
+        with open(os.path.join(tmpdir, "readme.md"), "w") as f:
+            f.write("# readme")  # should be excluded (not a source file)
+
+        files = discover_files(tmpdir)
+        assert len(files) == 2
+        assert all(f.endswith(".py") for f in files)
+
+
+def test_discover_files_with_exclude():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+            f.write("print('hello')")
+        with open(os.path.join(tmpdir, "test_main.py"), "w") as f:
+            f.write("def test(): pass")
+
+        files = discover_files(tmpdir, exclude_patterns=["test_*.py"])
+        assert len(files) == 1
+        assert files[0].endswith("main.py")
+
+
+# ---------------------------------------------------------------------------
+# measure_project (the core function)
+# ---------------------------------------------------------------------------
+
+
+def test_measure_project():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+            f.write(
+                textwrap.dedent("""\
+                import os
+
+                def hello():
+                    if True:
+                        print("hello")
+
+                def goodbye():
+                    print("bye")
+            """)
+            )
+
+        pm = measure_project(tmpdir)
+        assert pm.num_files == 1
+        assert pm.total_lines_of_code > 0
+        assert pm.total_functions == 2
+        assert pm.composite_score > 0
+
+
+def test_measure_project_empty():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm = measure_project(tmpdir)
+        assert pm.num_files == 0
+        assert pm.composite_score == 0.0
+
+
+def test_measure_project_deterministic():
+    """Same code must always produce the same score."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+            f.write("def foo():\n    return 42\n")
+
+        pm1 = measure_project(tmpdir)
+        pm2 = measure_project(tmpdir)
+        assert pm1.composite_score == pm2.composite_score
+
+
+def test_measure_project_custom_weights():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+            f.write("def foo():\n    return 42\n")
+
+        # All weights zero -> score should be 0
+        zero_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
+        pm = measure_project(tmpdir, weights=zero_weights)
+        assert pm.composite_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Format functions
+# ---------------------------------------------------------------------------
+
+
+def test_format_report():
+    pm = ProjectMetrics()
+    pm.composite_score = 123.45
+    pm.total_lines_of_code = 100
+    pm.num_files = 3
+    report = format_report(pm)
+    assert "composite_score:" in report
+    assert "123.45" in report
+
+
+def test_format_json():
+    pm = ProjectMetrics()
+    pm.composite_score = 99.9
+    pm.total_lines_of_code = 50
+    j = format_json(pm)
+    data = json.loads(j)
+    assert data["composite_score"] == 99.9
+    assert data["lines_of_code"] == 50
+
+
+# ---------------------------------------------------------------------------
+# Duplicate detection
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_ratio_no_duplicates():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "a.py"), "w") as f:
+            f.write("def unique_function_a():\n    return 'only in a'\n")
+        with open(os.path.join(tmpdir, "b.py"), "w") as f:
+            f.write("def unique_function_b():\n    return 'only in b'\n")
+
+        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
+        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
+        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        assert ratio == 0.0
+
+
+def test_duplicate_ratio_with_duplicates():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        shared_code = "def shared_func():\n    return 'this is duplicated across files'\n"
+        with open(os.path.join(tmpdir, "a.py"), "w") as f:
+            f.write(shared_code)
+        with open(os.path.join(tmpdir, "b.py"), "w") as f:
+            f.write(shared_code)
+
+        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
+        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
+        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        assert ratio > 0.0

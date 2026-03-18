@@ -1,0 +1,55 @@
+# autoreduce config for Elixir / Phoenix projects
+#
+# Targets lib/ by default. Ecto migrations (priv/) are out of scope.
+# Constraints: mix test + mix compile --warnings-as-errors + mix format.
+
+target_dir: "lib"
+
+include:
+  - "**/*.ex"
+
+exclude: []
+  # Uncomment to skip specific generated patterns:
+  # - "**/*_web/telemetry.ex"
+
+aggressiveness: aggressive
+
+constraints:
+  test_suite:
+    command: "mix test"
+    timeout: 300
+
+  specs:
+    - name: compile
+      command: "mix compile --warnings-as-errors"
+    - name: format
+      command: "mix format --check-formatted"
+    # Uncomment for stricter checks:
+    # - name: credo
+    #   command: "mix credo --strict"
+    # - name: dialyzer
+    #   command: "mix dialyzer"
+
+  # Snapshot observable behavior (optional)
+  # snapshots:
+  #   - name: routes
+  #     command: "mix phx.routes"
+  #   - name: ecto_migrations
+  #     command: "mix ecto.migrations"
+
+metric:
+  weights:
+    lines_of_code: 1.0
+    cyclomatic_complexity: 2.0
+    nesting_depth: 3.0
+    num_functions: 0.5
+    num_classes: 0.5 # counts defmodule, defprotocol, defimpl
+    num_files: 1.0
+    total_imports: 0.3 # counts import, alias, use, require
+    duplicate_ratio: 5.0
+
+loop:
+  attempt_timeout: 600
+  stagnation_threshold: 15
+  stagnation_strategy: escalate
+  branch_prefix: "autoreduce"

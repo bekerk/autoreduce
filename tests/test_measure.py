@@ -151,15 +151,18 @@ def test_measure_helpers():
 
     source = "if x:\n    for y in z:\n        while True:\n            pass"
     assert _regex_cyclomatic(source) >= 4  # base + if + for + while
-    assert _regex_nesting(
-        [
-        "def foo():",
-        "    if True:",
-        "        for i in x:",
-        "            pass",
-        "",
-        ]
-    ) >= 2
+    assert (
+        _regex_nesting(
+            [
+                "def foo():",
+                "    if True:",
+                "        for i in x:",
+                "            pass",
+                "",
+            ]
+        )
+        >= 2
+    )
     assert should_skip(".git/config") is True
     assert should_skip("node_modules/foo/bar.js") is True
     assert should_skip("__pycache__/foo.pyc") is True
@@ -280,28 +283,22 @@ def test_formatters():
 # ---------------------------------------------------------------------------
 
 
-def test_duplicate_ratio_no_duplicates():
+def test_duplicate_ratio():
     with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "a.py"), "w") as f:
-            f.write("def unique_function_a():\n    return 'only in a'\n")
-        with open(os.path.join(tmpdir, "b.py"), "w") as f:
-            f.write("def unique_function_b():\n    return 'only in b'\n")
+        a_path = os.path.join(tmpdir, "a.py")
+        b_path = os.path.join(tmpdir, "b.py")
 
-        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
-        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
-        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        with open(a_path, "w") as f:
+            f.write("def unique_function_a():\n    return 'only in a'\n")
+        with open(b_path, "w") as f:
+            f.write("def unique_function_b():\n    return 'only in b'\n")
+        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
         assert ratio == 0.0
 
-
-def test_duplicate_ratio_with_duplicates():
-    with tempfile.TemporaryDirectory() as tmpdir:
         shared_code = "def shared_func():\n    return 'this is duplicated across files'\n"
-        with open(os.path.join(tmpdir, "a.py"), "w") as f:
+        with open(a_path, "w") as f:
             f.write(shared_code)
-        with open(os.path.join(tmpdir, "b.py"), "w") as f:
+        with open(b_path, "w") as f:
             f.write(shared_code)
-
-        fm_a = analyze_python_file(os.path.join(tmpdir, "a.py"))
-        fm_b = analyze_python_file(os.path.join(tmpdir, "b.py"))
-        ratio = compute_duplicate_ratio([fm_a, fm_b])
+        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
         assert ratio > 0.0

@@ -261,7 +261,7 @@ def test_measure_project_custom_weights():
 # ---------------------------------------------------------------------------
 
 
-def test_format_report():
+def test_formatters():
     pm = ProjectMetrics()
     pm.composite_score = 123.45
     pm.total_lines_of_code = 100
@@ -270,15 +270,9 @@ def test_format_report():
     assert "composite_score:" in report
     assert "123.45" in report
 
-
-def test_format_json():
-    pm = ProjectMetrics()
-    pm.composite_score = 99.9
-    pm.total_lines_of_code = 50
-    j = format_json(pm)
-    data = json.loads(j)
-    assert data["composite_score"] == 99.9
-    assert data["lines_of_code"] == 50
+    data = json.loads(format_json(pm))
+    assert data["composite_score"] == 123.45
+    assert data["lines_of_code"] == 100
 
 
 # ---------------------------------------------------------------------------

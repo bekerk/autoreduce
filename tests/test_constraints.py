@@ -67,24 +67,18 @@ def test_constraint_report_all_pass():
 # ---------------------------------------------------------------------------
 
 
-def test_test_suite_pass():
-    c = TestSuiteConstraint(command="echo hello", timeout=10)
-    result = c.check()
-    assert result.passed is True
-    assert result.name == "test_suite"
+def test_test_suite_outcomes():
+    cases = [
+        ("echo hello", 10, True, ""),
+        ("false", 10, False, ""),
+        ("sleep 10", 1, False, "TIMEOUT"),
+    ]
 
-
-def test_test_suite_fail():
-    c = TestSuiteConstraint(command="false", timeout=10)
-    result = c.check()
-    assert result.passed is False
-
-
-def test_test_suite_timeout():
-    c = TestSuiteConstraint(command="sleep 10", timeout=1)
-    result = c.check()
-    assert result.passed is False
-    assert "TIMEOUT" in result.message
+    for command, timeout, passed, message in cases:
+        result = TestSuiteConstraint(command=command, timeout=timeout).check()
+        assert result.passed is passed
+        assert result.name == "test_suite"
+        assert message in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -92,26 +86,30 @@ def test_test_suite_timeout():
 # ---------------------------------------------------------------------------
 
 
-def test_spec_all_pass():
-    specs = [
-        {"name": "check1", "command": "true"},
-        {"name": "check2", "command": "echo ok"},
+def test_spec_outcomes():
+    cases = [
+        (
+            [
+                {"name": "check1", "command": "true"},
+                {"name": "check2", "command": "echo ok"},
+            ],
+            True,
+            "2/2",
+        ),
+        (
+            [
+                {"name": "good", "command": "true"},
+                {"name": "bad", "command": "false"},
+            ],
+            False,
+            "1/2",
+        ),
     ]
-    c = SpecConstraint(specs=specs, timeout=10)
-    result = c.check()
-    assert result.passed is True
-    assert "2/2" in result.message
 
-
-def test_spec_partial_fail():
-    specs = [
-        {"name": "good", "command": "true"},
-        {"name": "bad", "command": "false"},
-    ]
-    c = SpecConstraint(specs=specs, timeout=10)
-    result = c.check()
-    assert result.passed is False
-    assert "1/2" in result.message
+    for specs, passed, message in cases:
+        result = SpecConstraint(specs=specs, timeout=10).check()
+        assert result.passed is passed
+        assert message in result.message
 
 
 # ---------------------------------------------------------------------------

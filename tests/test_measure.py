@@ -4,6 +4,7 @@ These tests are the constraint boundary - they must all pass
 after every code change during the reduction loop.
 """
 
+import ast
 import json
 import os
 import sys
@@ -66,43 +67,23 @@ def test_project_metrics_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_visitor_simple():
-    """A function with no branches has complexity 1."""
-    import ast
+def test_visitor_counts():
+    cases = [
+        ("def foo():\n    return 1\n", 1, 1, 0),
+        ("def foo(x):\n    if x:\n        return 1\n    return 0\n", 2, 1, 0),
+        ("for i in range(10):\n    print(i)\n", 2, 0, 0),
+        ("class Foo:\n    def bar(self):\n        pass\n", 1, 1, 1),
+    ]
 
-    source = "def foo():\n    return 1\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 1
-    assert v.num_functions == 1
-
-
-def test_visitor_if_branch():
-    """An if statement adds 1 to complexity."""
-    import ast
-
-    source = "def foo(x):\n    if x:\n        return 1\n    return 0\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 2  # base 1 + 1 if
-    assert v.num_functions == 1
-
-
-def test_visitor_for_loop():
-    import ast
-
-    source = "for i in range(10):\n    print(i)\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.complexity == 2  # base 1 + 1 for
+    for source, complexity, num_functions, num_classes in cases:
+        visitor = PythonComplexityVisitor()
+        visitor.visit(ast.parse(source))
+        assert visitor.complexity == complexity
+        assert visitor.num_functions == num_functions
+        assert visitor.num_classes == num_classes
 
 
 def test_visitor_nesting():
-    import ast
-
     source = textwrap.dedent("""\
         def foo():
             if True:
@@ -114,17 +95,6 @@ def test_visitor_nesting():
     v = PythonComplexityVisitor()
     v.visit(tree)
     assert v.max_depth >= 3  # function > if > for > if
-
-
-def test_visitor_class():
-    import ast
-
-    source = "class Foo:\n    def bar(self):\n        pass\n"
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.num_classes == 1
-    assert v.num_functions == 1
 
 
 # ---------------------------------------------------------------------------

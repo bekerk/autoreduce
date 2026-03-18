@@ -93,24 +93,24 @@ def test_visitor_nesting():
 
 def test_analyze_python_file():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(
-            textwrap.dedent("""\
-            import os
-            import sys
-
-            # A comment
-            def hello():
-                if True:
-                    print("hello")
-
-            class Foo:
-                pass
-        """)
-        )
-        f.flush()
         path = f.name
 
     try:
+        with open(path, "w") as f:
+            f.write(
+                textwrap.dedent("""\
+                import os
+                import sys
+
+                # A comment
+                def hello():
+                    if True:
+                        print("hello")
+
+                class Foo:
+                    pass
+            """)
+            )
         fm = analyze_python_file(path)
         assert fm.lines_of_code > 0
         assert fm.num_imports == 2
@@ -118,19 +118,10 @@ def test_analyze_python_file():
         assert fm.num_classes == 1
         assert fm.comment_lines >= 1
         assert fm.cyclomatic_complexity >= 2  # base + if
-    finally:
-        os.unlink(path)
 
-
-def test_analyze_python_file_empty():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write("")
-        f.flush()
-        path = f.name
-
-    try:
-        fm = analyze_python_file(path)
-        assert fm.lines_of_code == 0
+        with open(path, "w") as f:
+            f.write("")
+        assert analyze_python_file(path).lines_of_code == 0
     finally:
         os.unlink(path)
 

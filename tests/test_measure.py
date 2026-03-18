@@ -36,30 +36,19 @@ from measure import (
 # ---------------------------------------------------------------------------
 
 
-def test_file_metrics_defaults():
-    fm = FileMetrics(path="test.py")
-    assert fm.path == "test.py"
-    assert fm.lines_of_code == 0
-    assert fm.blank_lines == 0
-    assert fm.comment_lines == 0
-    assert fm.total_lines == 0
+def test_metric_dataclasses():
+    file_metrics = FileMetrics(path="test.py")
+    assert file_metrics.path == "test.py"
+    assert file_metrics.lines_of_code == 0
+    assert file_metrics.blank_lines == 0
+    assert file_metrics.comment_lines == 0
+    assert file_metrics.total_lines == 0
+    assert FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2).total_lines == 15
 
-
-def test_file_metrics_total_lines():
-    fm = FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2)
-    assert fm.total_lines == 15
-
-
-# ---------------------------------------------------------------------------
-# ProjectMetrics dataclass
-# ---------------------------------------------------------------------------
-
-
-def test_project_metrics_defaults():
-    pm = ProjectMetrics()
-    assert pm.num_files == 0
-    assert pm.composite_score == 0.0
-    assert pm.total_lines_of_code == 0
+    project_metrics = ProjectMetrics()
+    assert project_metrics.num_files == 0
+    assert project_metrics.composite_score == 0.0
+    assert project_metrics.total_lines_of_code == 0
 
 
 # ---------------------------------------------------------------------------

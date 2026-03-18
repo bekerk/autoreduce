@@ -140,7 +140,7 @@ def test_analyze_python_file_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_detect_language():
+def test_measure_helpers():
     assert _detect_language("foo.py") == "python"
     assert _detect_language("bar.js") == "javascript"
     assert _detect_language("baz.ts") == "typescript"
@@ -149,36 +149,17 @@ def test_detect_language():
     assert _detect_language("readme.md") is None
     assert _detect_language("data.json") is None
 
-
-# ---------------------------------------------------------------------------
-# Regex helpers
-# ---------------------------------------------------------------------------
-
-
-def test_regex_cyclomatic():
     source = "if x:\n    for y in z:\n        while True:\n            pass"
-    cc = _regex_cyclomatic(source)
-    assert cc >= 4  # base + if + for + while
-
-
-def test_regex_nesting():
-    lines = [
+    assert _regex_cyclomatic(source) >= 4  # base + if + for + while
+    assert _regex_nesting(
+        [
         "def foo():",
         "    if True:",
         "        for i in x:",
         "            pass",
         "",
-    ]
-    depth = _regex_nesting(lines)
-    assert depth >= 2
-
-
-# ---------------------------------------------------------------------------
-# should_skip
-# ---------------------------------------------------------------------------
-
-
-def test_should_skip():
+        ]
+    ) >= 2
     assert should_skip(".git/config") is True
     assert should_skip("node_modules/foo/bar.js") is True
     assert should_skip("__pycache__/foo.pyc") is True

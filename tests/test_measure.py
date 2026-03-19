@@ -198,9 +198,15 @@ def test_discover_files_with_exclude():
 # ---------------------------------------------------------------------------
 
 
-def test_measure_project():
+def test_measure_project_variants():
+    """Same code must always produce the same score."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+        pm = measure_project(tmpdir)
+        assert pm.num_files == 0
+        assert pm.composite_score == 0.0
+
+        path = os.path.join(tmpdir, "main.py")
+        with open(path, "w") as f:
             f.write(
                 textwrap.dedent("""\
                 import os
@@ -220,34 +226,15 @@ def test_measure_project():
         assert pm.total_functions == 2
         assert pm.composite_score > 0
 
-
-def test_measure_project_empty():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pm = measure_project(tmpdir)
-        assert pm.num_files == 0
-        assert pm.composite_score == 0.0
-
-
-def test_measure_project_deterministic():
-    """Same code must always produce the same score."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "main.py"), "w") as f:
+        with open(path, "w") as f:
             f.write("def foo():\n    return 42\n")
 
         pm1 = measure_project(tmpdir)
         pm2 = measure_project(tmpdir)
         assert pm1.composite_score == pm2.composite_score
 
-
-def test_measure_project_custom_weights():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "main.py"), "w") as f:
-            f.write("def foo():\n    return 42\n")
-
-        # All weights zero -> score should be 0
         zero_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
-        pm = measure_project(tmpdir, weights=zero_weights)
-        assert pm.composite_score == 0.0
+        assert measure_project(tmpdir, weights=zero_weights).composite_score == 0.0
 
 
 # ---------------------------------------------------------------------------

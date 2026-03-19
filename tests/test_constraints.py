@@ -23,7 +23,7 @@ from constraints import (
 # ---------------------------------------------------------------------------
 
 
-def test_constraint_result_defaults_and_report_summaries():
+def test_constraint_result_defaults_report_summaries_and_run_all_outcomes():
     result = ConstraintResult(name="test", passed=True)
     assert result.name == "test"
     assert result.passed is True
@@ -47,6 +47,18 @@ def test_constraint_result_defaults_and_report_summaries():
     passing_report.all_passed = True
     passing_report.total_duration = 0.5
     assert "[PASS] total" in passing_report.summary()
+
+    report = run_all_constraints([TestSuiteConstraint(command="true", timeout=10)])
+    assert report.all_passed is True
+
+    constraints = [
+        TestSuiteConstraint(command="true", timeout=10),
+        TestSuiteConstraint(command="false", timeout=10),
+    ]
+    constraints[1].name = "test_suite_2"
+    report = run_all_constraints(constraints)
+    assert report.all_passed is False
+    assert len(report.results) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -177,22 +189,3 @@ def test_load_constraints_all_types():
     }
     constraints = load_constraints(config, workdir="/tmp")
     assert len(constraints) == 3
-
-
-# ---------------------------------------------------------------------------
-# run_all_constraints
-# ---------------------------------------------------------------------------
-
-
-def test_run_all_outcomes():
-    report = run_all_constraints([TestSuiteConstraint(command="true", timeout=10)])
-    assert report.all_passed is True
-
-    constraints = [
-        TestSuiteConstraint(command="true", timeout=10),
-        TestSuiteConstraint(command="false", timeout=10),
-    ]
-    constraints[1].name = "test_suite_2"
-    report = run_all_constraints(constraints)
-    assert report.all_passed is False
-    assert len(report.results) == 2

@@ -1,259 +1,366 @@
 import ast
+import builtins
 import json
-import os
+import runpy
 import sys
-import tempfile
 import textwrap
+from pathlib import Path
 
-# Ensure autoreduce modules are importable
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
 
-from measure import (
-    DEFAULT_WEIGHTS,
-    FileMetrics,
-    ProjectMetrics,
-    PythonComplexityVisitor,
-    _detect_language,
-    _regex_cyclomatic,
-    _regex_nesting,
-    analyze_python_file,
-    compute_duplicate_ratio,
-    discover_files,
-    format_json,
-    format_report,
-    measure_project,
-    should_skip,
-)
-
-# ---------------------------------------------------------------------------
-# FileMetrics dataclass
-# ---------------------------------------------------------------------------
+import measure as measure_mod
 
 
-def test_metric_dataclasses_formatters_and_helpers():
-    file_metrics = FileMetrics(path="test.py")
+def write(path: Path, body: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+
+def test_metric_dataclasses_and_line_scanner():
+    file_metrics = measure_mod.FileMetrics(path="test.py")
     assert file_metrics.path == "test.py"
     assert file_metrics.lines_of_code == 0
     assert file_metrics.blank_lines == 0
     assert file_metrics.comment_lines == 0
     assert file_metrics.total_lines == 0
-    assert FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2).total_lines == 15
+    assert measure_mod.FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2).total_lines == 15
 
-    project_metrics = ProjectMetrics()
+    project_metrics = measure_mod.ProjectMetrics()
     assert project_metrics.num_files == 0
     assert project_metrics.composite_score == 0.0
     assert project_metrics.total_lines_of_code == 0
     project_metrics.composite_score = 123.45
     project_metrics.total_lines_of_code = 100
     project_metrics.num_files = 3
-    report = format_report(project_metrics)
+    report = measure_mod.format_report(project_metrics)
     assert "composite_score:" in report
     assert "123.45" in report
 
-    data = json.loads(format_json(project_metrics))
+    data = json.loads(measure_mod.format_json(project_metrics))
     assert data["composite_score"] == 123.45
     assert data["lines_of_code"] == 100
 
-    assert _detect_language("foo.py") == "python"
-    assert _detect_language("bar.js") == "javascript"
-    assert _detect_language("baz.ts") == "typescript"
-    assert _detect_language("qux.rs") == "rust"
-    assert _detect_language("thing.go") == "go"
-    assert _detect_language("readme.md") is None
-    assert _detect_language("data.json") is None
-
-    source = "if x:\n    for y in z:\n        while True:\n            pass"
-    assert _regex_cyclomatic(source) >= 4  # base + if + for + while
-    assert (
-        _regex_nesting(
-            [
-                "def foo():",
-                "    if True:",
-                "        for i in x:",
-                "            pass",
-                "",
-            ]
-        )
-        >= 2
+    scanned = measure_mod._scan_lines(
+        ["import os", "", "# comment", "value = 1"],
+        comment_prefixes=("#",),
+        import_prefixes=("import ", "from "),
     )
-    assert should_skip(".git/config") is True
-    assert should_skip("node_modules/foo/bar.js") is True
-    assert should_skip("__pycache__/foo.pyc") is True
-    assert should_skip("src/main.py") is False
-    assert should_skip("lib/utils.js") is False
+    assert scanned == (2, 1, 1, 1, 9.0)
 
 
-# ---------------------------------------------------------------------------
-# Python complexity visitor
-# ---------------------------------------------------------------------------
+def test_python_complexity_visitor_covers_special_nodes():
+    source = textwrap.dedent(
+        """
+        class Box:
+            async def run(self, xs):
+                assert xs
+                with open("demo.txt"):
+                    return [x for x in xs if x and True] if xs and len(xs) > 1 else []
+
+        try:
+            pass
+        except Exception:
+            pass
+        """
+    )
+    visitor = measure_mod.PythonComplexityVisitor()
+    visitor.visit(ast.parse(source))
+
+    assert visitor.num_functions == 1
+    assert visitor.num_classes == 1
+    assert visitor.max_depth >= 3
+    assert visitor.complexity >= 8
 
 
-def test_visitor_counts():
-    cases = [
-        ("def foo():\n    return 1\n", 1, 1, 0),
-        ("def foo(x):\n    if x:\n        return 1\n    return 0\n", 2, 1, 0),
-        ("for i in range(10):\n    print(i)\n", 2, 0, 0),
-        ("class Foo:\n    def bar(self):\n        pass\n", 1, 1, 1),
-    ]
+def test_analyze_python_file_success_missing_and_syntax_fallback(tmp_path):
+    assert measure_mod.analyze_python_file(str(tmp_path / "missing.py")).lines_of_code == 0
+    assert measure_mod._read_text_file(str(tmp_path / "missing.py")) is None
 
-    for source, complexity, num_functions, num_classes in cases:
-        visitor = PythonComplexityVisitor()
-        visitor.visit(ast.parse(source))
-        assert visitor.complexity == complexity
-        assert visitor.num_functions == num_functions
-        assert visitor.num_classes == num_classes
+    empty = tmp_path / "empty.py"
+    empty.write_text("", encoding="utf-8")
+    assert measure_mod.analyze_python_file(str(empty)).lines_of_code == 0
 
+    valid = tmp_path / "main.py"
+    write(
+        valid,
+        """
+        import os
+        from sys import argv
 
-def test_visitor_nesting():
-    source = textwrap.dedent("""\
-        def foo():
+        # comment
+        def hello():
             if True:
-                for i in range(10):
-                    if i > 5:
-                        pass
-    """)
-    tree = ast.parse(source)
-    v = PythonComplexityVisitor()
-    v.visit(tree)
-    assert v.max_depth >= 3  # function > if > for > if
+                return argv[0]
+
+        class Box:
+            pass
+        """,
+    )
+    metrics = measure_mod.analyze_python_file(str(valid))
+    assert metrics.lines_of_code > 0
+    assert metrics.comment_lines == 1
+    assert metrics.num_imports == 2
+    assert metrics.num_functions == 1
+    assert metrics.num_classes == 1
+    assert metrics.cyclomatic_complexity >= 2
+
+    broken = tmp_path / "broken.py"
+    write(
+        broken,
+        """
+        def nope(
+            if True:
+                pass
+        """,
+    )
+    fallback = measure_mod.analyze_python_file(str(broken))
+    assert fallback.cyclomatic_complexity >= 2
+    assert fallback.max_nesting_depth >= 1
 
 
-# ---------------------------------------------------------------------------
-# analyze_python_file
-# ---------------------------------------------------------------------------
+def test_generic_analysis_variants_and_dispatch(tmp_path):
+    js_file = tmp_path / "app.js"
+    write(
+        js_file,
+        """
+        // comment
+        import thing from "thing"
+        function demo() {
+            if (left && right) {
+                return 1
+            }
+        }
+        class Box {}
+        """,
+    )
+    js_metrics = measure_mod.analyze_generic_file(str(js_file))
+    assert js_metrics.comment_lines == 1
+    assert js_metrics.num_imports == 1
+    assert js_metrics.num_functions == 1
+    assert js_metrics.num_classes == 1
+    assert js_metrics.cyclomatic_complexity >= 2
+    assert measure_mod.analyze_file(str(js_file)).num_functions == 1
+
+    ex_file = tmp_path / "demo.ex"
+    write(
+        ex_file,
+        """
+        # comment
+        defmodule Demo do
+          alias Foo.Bar
+          def hello, do: :ok
+        end
+        """,
+    )
+    ex_metrics = measure_mod.analyze_generic_file(str(ex_file))
+    assert ex_metrics.comment_lines == 1
+    assert ex_metrics.num_imports == 1
+    assert ex_metrics.num_functions == 1
+    assert ex_metrics.num_classes == 1
+
+    empty = tmp_path / "empty.js"
+    empty.write_text("", encoding="utf-8")
+    assert measure_mod.analyze_generic_file(str(empty)).lines_of_code == 0
+    assert measure_mod.analyze_generic_file(str(tmp_path / "missing.js")).lines_of_code == 0
+    assert measure_mod.analyze_generic_file(str(tmp_path / "notes.md")).lines_of_code == 0
 
 
-def test_analyze_python_file():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        path = f.name
-
-    try:
-        with open(path, "w") as f:
-            f.write(
-                textwrap.dedent("""\
-                import os
-                import sys
-
-                # A comment
-                def hello():
-                    if True:
-                        print("hello")
-
-                class Foo:
-                    pass
-            """)
-            )
-        fm = analyze_python_file(path)
-        assert fm.lines_of_code > 0
-        assert fm.num_imports == 2
-        assert fm.num_functions == 1
-        assert fm.num_classes == 1
-        assert fm.comment_lines >= 1
-        assert fm.cyclomatic_complexity >= 2  # base + if
-
-        with open(path, "w") as f:
-            f.write("")
-        assert analyze_python_file(path).lines_of_code == 0
-    finally:
-        os.unlink(path)
+@pytest.mark.parametrize(
+    ("filepath", "expected"),
+    [
+        pytest.param("foo.py", "python", id="python"),
+        pytest.param("bar.js", "javascript", id="javascript"),
+        pytest.param("baz.ts", "typescript", id="typescript"),
+        pytest.param("qux.rs", "rust", id="rust"),
+        pytest.param("thing.go", "go", id="go"),
+        pytest.param("demo.ex", "elixir", id="elixir"),
+        pytest.param("readme.md", None, id="unknown"),
+    ],
+)
+def test_detect_language(filepath, expected):
+    assert measure_mod._detect_language(filepath) == expected
 
 
-# ---------------------------------------------------------------------------
-# discover_files
-# ---------------------------------------------------------------------------
+def test_regex_helpers():
+    assert measure_mod._regex_cyclomatic("if x:\n    while y:\n        pass") >= 3
+    assert measure_mod._regex_nesting(["\tif ok:", "\t\tpass"]) == 2
 
 
-def test_discover_files():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create some files
-        with open(os.path.join(tmpdir, "main.py"), "w") as f:
-            f.write("print('hello')")
-        with open(os.path.join(tmpdir, "utils.py"), "w") as f:
-            f.write("def foo(): pass")
-        with open(os.path.join(tmpdir, "readme.md"), "w") as f:
-            f.write("# readme")  # should be excluded (not a source file)
-
-        files = discover_files(tmpdir)
-        assert len(files) == 2
-        assert all(f.endswith(".py") for f in files)
-
-
-def test_discover_files_with_exclude():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "main.py"), "w") as f:
-            f.write("print('hello')")
-        with open(os.path.join(tmpdir, "test_main.py"), "w") as f:
-            f.write("def test(): pass")
-
-        files = discover_files(tmpdir, exclude_patterns=["test_*.py"])
-        assert len(files) == 1
-        assert files[0].endswith("main.py")
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        pytest.param(".git/config", True, id="git-dir"),
+        pytest.param("node_modules/foo/bar.js", True, id="node-modules"),
+        pytest.param("__pycache__/foo.pyc", True, id="pycache"),
+        pytest.param("pkg/demo.egg-info/PKG-INFO", True, id="egg-info"),
+        pytest.param("src/main.py", False, id="source-file"),
+    ],
+)
+def test_should_skip(path, expected):
+    assert measure_mod.should_skip(path) is expected
 
 
-# ---------------------------------------------------------------------------
-# measure_project (the core function)
-# ---------------------------------------------------------------------------
+def test_duplicate_ratio_ignores_missing_files_and_short_lines(tmp_path):
+    short = tmp_path / "short.py"
+    write(short, "x = 1\n")
+    ratio = measure_mod.compute_duplicate_ratio(
+        [
+            measure_mod.FileMetrics(path=str(short)),
+            measure_mod.FileMetrics(path=str(tmp_path / "missing.py")),
+        ]
+    )
+    assert ratio == 0.0
 
 
-def test_measure_project_variants():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pm = measure_project(tmpdir)
-        assert pm.num_files == 0
-        assert pm.composite_score == 0.0
+def test_duplicate_ratio_detects_shared_code(tmp_path):
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
+    shared = "def shared_function_name():\n    return 'same long line'\n"
+    write(first, shared)
+    write(second, shared)
 
-        path = os.path.join(tmpdir, "main.py")
-        with open(path, "w") as f:
-            f.write(
-                textwrap.dedent("""\
-                import os
-
-                def hello():
-                    if True:
-                        print("hello")
-
-                def goodbye():
-                    print("bye")
-            """)
-            )
-
-        pm = measure_project(tmpdir)
-        assert pm.num_files == 1
-        assert pm.total_lines_of_code > 0
-        assert pm.total_functions == 2
-        assert pm.composite_score > 0
-
-        with open(path, "w") as f:
-            f.write("def foo():\n    return 42\n")
-
-        pm1 = measure_project(tmpdir)
-        pm2 = measure_project(tmpdir)
-        assert pm1.composite_score == pm2.composite_score
-
-        zero_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
-        assert measure_project(tmpdir, weights=zero_weights).composite_score == 0.0
+    duplicate_ratio = measure_mod.compute_duplicate_ratio(
+        [
+            measure_mod.analyze_python_file(str(first)),
+            measure_mod.analyze_python_file(str(second)),
+        ]
+    )
+    assert duplicate_ratio > 0
 
 
-# ---------------------------------------------------------------------------
-# Duplicate detection
-# ---------------------------------------------------------------------------
+def test_discover_files_include_exclude_and_skips(tmp_path, monkeypatch):
+    write(tmp_path / "src" / "main.py", "print('hello')\n")
+    write(tmp_path / "src" / "helper.js", "function demo() {}\n")
+    write(tmp_path / "tests" / "test_main.py", "def test_ok(): pass\n")
+    write(tmp_path / "node_modules" / "ignored.js", "function skip() {}\n")
+    write(tmp_path / "pkg" / "demo.egg-info" / "bad.py", "print('skip')\n")
+    write(tmp_path / "notes.txt", "ignore me\n")
+
+    discovered = measure_mod.discover_files(str(tmp_path))
+    assert [Path(path).name for path in discovered] == ["helper.js", "main.py", "test_main.py"]
+
+    included = measure_mod.discover_files(str(tmp_path), include_patterns=["src/*.py"])
+    assert included == [str((tmp_path / "src" / "main.py").resolve())]
+
+    excluded = measure_mod.discover_files(str(tmp_path), exclude_patterns=["tests/*"])
+    assert all(not path.endswith("test_main.py") for path in excluded)
+
+    original_should_skip = measure_mod.should_skip
+
+    def fake_should_skip(path):
+        if path == "src/main.py":
+            return True
+        return original_should_skip(path)
+
+    monkeypatch.setattr(measure_mod, "should_skip", fake_should_skip)
+    skipped = measure_mod.discover_files(str(tmp_path), include_patterns=["src/*.py"])
+    assert skipped == []
 
 
-def test_duplicate_ratio():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        a_path = os.path.join(tmpdir, "a.py")
-        b_path = os.path.join(tmpdir, "b.py")
+def test_measure_project_and_formatters(tmp_path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    empty_project = measure_mod.measure_project(str(empty_dir))
+    assert empty_project.num_files == 0
+    assert empty_project.composite_score == 0.0
 
-        with open(a_path, "w") as f:
-            f.write("def unique_function_a():\n    return 'only in a'\n")
-        with open(b_path, "w") as f:
-            f.write("def unique_function_b():\n    return 'only in b'\n")
-        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
-        assert ratio == 0.0
+    write(
+        tmp_path / "main.py",
+        """
+        import os
 
-        shared_code = "def shared_func():\n    return 'this is duplicated across files'\n"
-        with open(a_path, "w") as f:
-            f.write(shared_code)
-        with open(b_path, "w") as f:
-            f.write(shared_code)
-        ratio = compute_duplicate_ratio([analyze_python_file(a_path), analyze_python_file(b_path)])
-        assert ratio > 0.0
+        def hello():
+            if True:
+                return os.getcwd()
+        """,
+    )
+    write(
+        tmp_path / "util.js",
+        """
+        import thing from "thing"
+        function helper() {
+            return thing
+        }
+        """,
+    )
+
+    project = measure_mod.measure_project(str(tmp_path))
+    assert project.num_files == 2
+    assert project.total_functions == 2
+    assert project.total_imports == 2
+    assert project.composite_score > 0
+
+    zero_score = measure_mod.measure_project(
+        str(tmp_path),
+        weights={key: 0.0 for key in measure_mod.DEFAULT_WEIGHTS},
+    )
+    assert zero_score.composite_score == 0.0
+
+    repeated_project = measure_mod.measure_project(str(tmp_path))
+    assert project.composite_score == repeated_project.composite_score
+
+    report = measure_mod.format_report(project)
+    data = json.loads(measure_mod.format_json(project))
+    assert "composite_score:" in report
+    assert data["num_files"] == 2
+
+
+def test_load_config_branches(tmp_path, monkeypatch):
+    assert measure_mod.load_config(None) == {"weights": measure_mod.DEFAULT_WEIGHTS.copy()}
+
+    config_path = tmp_path / "config.yaml"
+    write(
+        config_path,
+        """
+        metric:
+          weights:
+            lines_of_code: 9
+            num_files: 2
+        """,
+    )
+    loaded = measure_mod.load_config(str(config_path))
+    assert loaded["weights"]["lines_of_code"] == 9
+    assert loaded["weights"]["num_files"] == 2
+    assert loaded["weights"]["cyclomatic_complexity"] == measure_mod.DEFAULT_WEIGHTS["cyclomatic_complexity"]
+
+    empty_path = tmp_path / "empty.yaml"
+    write(empty_path, "{}")
+    assert measure_mod.load_config(str(empty_path)) == {"weights": measure_mod.DEFAULT_WEIGHTS.copy()}
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("yaml unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert measure_mod.load_config(str(config_path)) == {"weights": measure_mod.DEFAULT_WEIGHTS.copy()}
+
+
+def test_measure_main_and_entrypoint(tmp_path, monkeypatch, capsys):
+    write(tmp_path / "main.py", "def foo():\n    return 42\n")
+    config_path = tmp_path / "config.yaml"
+    write(
+        config_path,
+        """
+        metric:
+          weights:
+            lines_of_code: 2
+        """,
+    )
+
+    args = ["--target", str(tmp_path), "--config", str(config_path), "--json", "--include", "*.py"]
+    assert measure_mod.main(args) == 0
+    json_output = json.loads(capsys.readouterr().out)
+    assert json_output["num_files"] == 1
+
+    assert measure_mod.main(["--target", str(tmp_path), "--exclude", "*.py"]) == 0
+    assert "composite_score:" in capsys.readouterr().out
+
+    monkeypatch.setattr(sys, "argv", ["measure.py", "--target", str(tmp_path)])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("measure", run_name="__main__")
+
+    assert exc.value.code == 0
+    assert "composite_score:" in capsys.readouterr().out

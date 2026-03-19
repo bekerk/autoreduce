@@ -209,42 +209,66 @@ class PythonComplexityVisitor(ast.NodeVisitor):
         self._visit_nesting_only(node)
 
 
-def analyze_python_file(filepath: str) -> FileMetrics:
-    """Analyze a Python file using the AST for accurate metrics."""
-    metrics = FileMetrics(path=filepath)
-
+def _read_text_file(filepath: str) -> str | None:
     try:
         with open(filepath, encoding="utf-8", errors="replace") as f:
-            source = f.read()
+            return f.read()
     except OSError:
-        return metrics
+        return None
 
-    lines = source.splitlines()
-    if not lines:
-        return metrics
 
-    # Count line types
+def _scan_lines(
+    lines: list,
+    *,
+    comment_re=None,
+    comment_prefixes: tuple[str, ...] = (),
+    import_re=None,
+    import_prefixes: tuple[str, ...] = (),
+) -> tuple[int, int, int, int, float]:
     code_lines = 0
     blank_lines = 0
     comment_lines = 0
+    num_imports = 0
     line_lengths = []
 
     for line in lines:
         stripped = line.strip()
         if not stripped:
             blank_lines += 1
-        elif stripped.startswith("#"):
+            continue
+        if (comment_re and comment_re.match(line)) or (comment_prefixes and stripped.startswith(comment_prefixes)):
             comment_lines += 1
-        else:
-            code_lines += 1
-            line_lengths.append(len(line))
-            if stripped.startswith("import ") or stripped.startswith("from "):
-                metrics.num_imports += 1
+            continue
 
-    metrics.lines_of_code = code_lines
-    metrics.blank_lines = blank_lines
-    metrics.comment_lines = comment_lines
-    metrics.avg_line_length = sum(line_lengths) / len(line_lengths) if line_lengths else 0
+        code_lines += 1
+        line_lengths.append(len(line))
+
+        if (import_re and import_re.match(line)) or (import_prefixes and stripped.startswith(import_prefixes)):
+            num_imports += 1
+
+    avg_line_length = sum(line_lengths) / len(line_lengths) if line_lengths else 0
+    return code_lines, blank_lines, comment_lines, num_imports, avg_line_length
+
+
+def analyze_python_file(filepath: str) -> FileMetrics:
+    """Analyze a Python file using the AST for accurate metrics."""
+    metrics = FileMetrics(path=filepath)
+
+    source = _read_text_file(filepath)
+    if source is None:
+        return metrics
+
+    lines = source.splitlines()
+    if not lines:
+        return metrics
+
+    (
+        metrics.lines_of_code,
+        metrics.blank_lines,
+        metrics.comment_lines,
+        metrics.num_imports,
+        metrics.avg_line_length,
+    ) = _scan_lines(lines, comment_prefixes=("#",), import_prefixes=("import ", "from "))
 
     # AST analysis for complexity
     try:
@@ -350,10 +374,8 @@ def analyze_generic_file(filepath: str) -> FileMetrics:
     if lang is None:
         return metrics
 
-    try:
-        with open(filepath, encoding="utf-8", errors="replace") as f:
-            source = f.read()
-    except OSError:
+    source = _read_text_file(filepath)
+    if source is None:
         return metrics
 
     lines = source.splitlines()
@@ -364,29 +386,13 @@ def analyze_generic_file(filepath: str) -> FileMetrics:
     comment_re = _COMMENT_PATTERNS.get(comment_style)
     import_re = _IMPORT_PATTERNS.get(lang)
 
-    code_lines = 0
-    blank_lines = 0
-    comment_lines = 0
-    line_lengths = []
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            blank_lines += 1
-        elif comment_re and comment_re.match(line):
-            comment_lines += 1
-        else:
-            code_lines += 1
-            line_lengths.append(len(line))
-
-    metrics.lines_of_code = code_lines
-    metrics.blank_lines = blank_lines
-    metrics.comment_lines = comment_lines
-    metrics.avg_line_length = sum(line_lengths) / len(line_lengths) if line_lengths else 0
-
-    # Imports
-    if import_re:
-        metrics.num_imports = sum(1 for line in lines if import_re.match(line))
+    (
+        metrics.lines_of_code,
+        metrics.blank_lines,
+        metrics.comment_lines,
+        metrics.num_imports,
+        metrics.avg_line_length,
+    ) = _scan_lines(lines, comment_re=comment_re, import_re=import_re)
 
     # Complexity (regex approximation)
     metrics.cyclomatic_complexity = _regex_cyclomatic(source)
@@ -416,13 +422,11 @@ def compute_duplicate_ratio(file_metrics_list: list) -> float:
     total_code_lines = 0
 
     for fm in file_metrics_list:
-        try:
-            with open(fm.path, encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except OSError:
+        source = _read_text_file(fm.path)
+        if source is None:
             continue
 
-        for line in lines:
+        for line in source.splitlines():
             stripped = line.strip()
             if not stripped or len(stripped) < 10:
                 continue
@@ -585,26 +589,30 @@ def format_json(pm: ProjectMetrics) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _default_config() -> dict:
+    return {"weights": DEFAULT_WEIGHTS.copy()}
+
+
 def load_config(config_path: str | None) -> dict:
     """Load weights and settings from a YAML config file."""
     if config_path is None:
-        return {"weights": DEFAULT_WEIGHTS.copy()}
+        return _default_config()
 
     try:
         import yaml
     except ImportError:
-        return {"weights": DEFAULT_WEIGHTS.copy()}
+        return _default_config()
 
     with open(config_path) as f:
         raw = yaml.safe_load(f)
 
-    config = {"weights": DEFAULT_WEIGHTS.copy()}
+    config = _default_config()
     if raw and "metric" in raw and "weights" in raw["metric"]:
         config["weights"].update(raw["metric"]["weights"])
     return config
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Measure composite code complexity (the autoreduce metric)")
     parser.add_argument(
         "--target",
@@ -624,7 +632,7 @@ if __name__ == "__main__":
         help="File glob patterns to include (e.g. 'src/**/*.py')",
     )
     parser.add_argument("--exclude", nargs="*", default=None, help="File glob patterns to exclude")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     config = load_config(args.config)
     pm = measure_project(
@@ -638,3 +646,8 @@ if __name__ == "__main__":
         print(format_json(pm))
     else:
         print(format_report(pm))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,7 +1,3 @@
-"""
-Tests for the constraints module.
-"""
-
 import os
 import sys
 import tempfile

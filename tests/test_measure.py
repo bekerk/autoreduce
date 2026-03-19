@@ -1,9 +1,3 @@
-"""
-Tests for the measure module.
-These tests are the constraint boundary - they must all pass
-after every code change during the reduction loop.
-"""
-
 import ast
 import json
 import os
@@ -202,7 +196,6 @@ def test_discover_files_with_exclude():
 
 
 def test_measure_project_variants():
-    """Same code must always produce the same score."""
     with tempfile.TemporaryDirectory() as tmpdir:
         pm = measure_project(tmpdir)
         assert pm.num_files == 0

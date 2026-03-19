@@ -20,7 +20,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 
@@ -78,6 +77,36 @@ class BaseConstraint:
         pass
 
 
+def _run_command(command: str, *, workdir: str, timeout: int):
+    return subprocess.run(
+        command,
+        shell=True,
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _elapsed_seconds(started_at: float) -> float:
+    return round(time.time() - started_at, 1)
+
+
+def _load_json_file(path: str) -> dict | None:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _ensure_parent_dir(path: str):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # TestSuiteConstraint
 # ---------------------------------------------------------------------------
@@ -106,15 +135,7 @@ class TestSuiteConstraint(BaseConstraint):
     def check(self) -> ConstraintResult:
         t0 = time.time()
         try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                cwd=self.workdir,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-            duration = time.time() - t0
+            result = _run_command(self.command, workdir=self.workdir, timeout=self.timeout)
             passed = result.returncode == 0
 
             # Extract summary from output
@@ -126,25 +147,23 @@ class TestSuiteConstraint(BaseConstraint):
             return ConstraintResult(
                 name=self.name,
                 passed=passed,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=summary[:200] if passed else f"exit code {result.returncode}",
                 details=output[-2000:] if not passed else "",
             )
 
         except subprocess.TimeoutExpired:
-            duration = time.time() - t0
             return ConstraintResult(
                 name=self.name,
                 passed=False,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=f"TIMEOUT after {self.timeout}s",
             )
         except Exception as e:
-            duration = time.time() - t0
             return ConstraintResult(
                 name=self.name,
                 passed=False,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=f"ERROR: {e}",
             )
 
@@ -183,14 +202,7 @@ class SpecConstraint(BaseConstraint):
         for spec in self.specs:
             spec_name = spec.get("name", spec["command"][:40])
             try:
-                result = subprocess.run(
-                    spec["command"],
-                    shell=True,
-                    cwd=self.workdir,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                )
+                result = _run_command(spec["command"], workdir=self.workdir, timeout=self.timeout)
                 if result.returncode != 0:
                     all_passed = False
                     failures.append(f"{spec_name}: exit {result.returncode}")
@@ -257,24 +269,19 @@ class CoverageConstraint(BaseConstraint):
         return None
 
     def _load_baseline(self) -> float | None:
-        if os.path.exists(self.baseline_path):
-            with open(self.baseline_path) as f:
-                data = json.load(f)
-            return data.get("coverage_percent")
-        return None
+        data = _load_json_file(self.baseline_path)
+        if data is None:
+            return None
+        try:
+            return float(data["coverage_percent"])
+        except (KeyError, TypeError, ValueError):
+            return None
 
     def setup(self):
         """Capture the baseline coverage percentage."""
-        os.makedirs(os.path.dirname(self.baseline_path), exist_ok=True)
+        _ensure_parent_dir(self.baseline_path)
         try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                cwd=self.workdir,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
+            result = _run_command(self.command, workdir=self.workdir, timeout=self.timeout)
             output = result.stdout + result.stderr
             pct = self._extract_coverage(output)
             if pct is None:
@@ -298,22 +305,14 @@ class CoverageConstraint(BaseConstraint):
             )
 
         try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                cwd=self.workdir,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-            duration = time.time() - t0
+            result = _run_command(self.command, workdir=self.workdir, timeout=self.timeout)
             output = result.stdout + result.stderr
 
             if result.returncode != 0:
                 return ConstraintResult(
                     name=self.name,
                     passed=False,
-                    duration_seconds=round(duration, 1),
+                    duration_seconds=_elapsed_seconds(t0),
                     message=(f"coverage command failed with exit code {result.returncode}"),
                     details=output[-2000:],
                 )
@@ -323,7 +322,7 @@ class CoverageConstraint(BaseConstraint):
                 return ConstraintResult(
                     name=self.name,
                     passed=False,
-                    duration_seconds=round(duration, 1),
+                    duration_seconds=_elapsed_seconds(t0),
                     message="could not extract coverage percentage from output",
                 )
 
@@ -332,7 +331,7 @@ class CoverageConstraint(BaseConstraint):
             return ConstraintResult(
                 name=self.name,
                 passed=passed,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=(
                     f"coverage {current}% (baseline {baseline}%, delta {-drop:+.1f}%)"
                     if passed
@@ -346,19 +345,17 @@ class CoverageConstraint(BaseConstraint):
             )
 
         except subprocess.TimeoutExpired:
-            duration = time.time() - t0
             return ConstraintResult(
                 name=self.name,
                 passed=False,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=f"TIMEOUT after {self.timeout}s",
             )
         except Exception as e:
-            duration = time.time() - t0
             return ConstraintResult(
                 name=self.name,
                 passed=False,
-                duration_seconds=round(duration, 1),
+                duration_seconds=_elapsed_seconds(t0),
                 message=f"ERROR: {e}",
             )
 
@@ -407,14 +404,7 @@ class SnapshotConstraint(BaseConstraint):
         for cmd in self.commands:
             name = cmd["name"]
             try:
-                result = subprocess.run(
-                    cmd["command"],
-                    shell=True,
-                    cwd=self.workdir,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                )
+                result = _run_command(cmd["command"], workdir=self.workdir, timeout=self.timeout)
                 output = result.stdout
                 snapshot = {
                     "command": cmd["command"],
@@ -433,48 +423,52 @@ class SnapshotConstraint(BaseConstraint):
         t0 = time.time()
         failures = []
         all_passed = True
+        failed_commands = 0
 
         for cmd in self.commands:
             name = cmd["name"]
             golden_path = self._snapshot_path(name)
+            command_failed = False
 
             if not os.path.exists(golden_path):
                 failures.append(f"{name}: no golden snapshot found")
                 all_passed = False
+                failed_commands += 1
                 continue
 
-            with open(golden_path) as f:
-                golden = json.load(f)
+            golden = _load_json_file(golden_path)
+            if golden is None:
+                failures.append(f"{name}: invalid golden snapshot")
+                all_passed = False
+                failed_commands += 1
+                continue
 
             try:
-                result = subprocess.run(
-                    cmd["command"],
-                    shell=True,
-                    cwd=self.workdir,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                )
+                result = _run_command(cmd["command"], workdir=self.workdir, timeout=self.timeout)
 
                 current_hash = self._hash_output(result.stdout)
-                if current_hash != golden["stdout_hash"]:
-                    all_passed = False
+                if current_hash != golden.get("stdout_hash"):
+                    command_failed = True
                     failures.append(f"{name}: output changed")
 
-                if result.returncode != golden["exit_code"]:
-                    all_passed = False
-                    failures.append(f"{name}: exit code {result.returncode} (expected {golden['exit_code']})")
+                if result.returncode != golden.get("exit_code"):
+                    command_failed = True
+                    failures.append(f"{name}: exit code {result.returncode} (expected {golden.get('exit_code')})")
 
             except subprocess.TimeoutExpired:
-                all_passed = False
+                command_failed = True
                 failures.append(f"{name}: TIMEOUT")
             except Exception as e:
-                all_passed = False
+                command_failed = True
                 failures.append(f"{name}: ERROR {e}")
+
+            if command_failed:
+                all_passed = False
+                failed_commands += 1
 
         duration = time.time() - t0
         n_cmds = len(self.commands)
-        n_passed = n_cmds - len(failures)
+        n_passed = n_cmds - failed_commands
 
         return ConstraintResult(
             name=self.name,
@@ -587,12 +581,13 @@ def setup_all_constraints(constraints: list):
 # CLI
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run autoreduce constraint checks")
     parser.add_argument(
         "--check",
         default="all",
-        choices=["all", "test_suite", "spec", "snapshot"],
+        choices=["all", "test_suite", "spec", "snapshot", "coverage"],
         help="Which constraint to check",
     )
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
@@ -602,7 +597,7 @@ if __name__ == "__main__":
         help="Run one-time setup (generate snapshots, etc.)",
     )
     parser.add_argument("--workdir", default=None, help="Working directory for running constraints")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Load config
     with open(args.config) as f:
@@ -614,13 +609,17 @@ if __name__ == "__main__":
 
     if not constraints:
         print("No constraints configured. Check your config.yaml.")
-        sys.exit(1)
+        return 1
 
     if args.setup:
         setup_all_constraints(constraints)
         print("Setup complete.")
-        sys.exit(0)
+        return 0
 
     report = run_all_constraints(constraints)
     print(report.summary())
-    sys.exit(0 if report.all_passed else 1)
+    return 0 if report.all_passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

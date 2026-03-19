@@ -23,19 +23,12 @@ from constraints import (
 # ---------------------------------------------------------------------------
 
 
-def test_constraint_result_defaults():
-    r = ConstraintResult(name="test", passed=True)
-    assert r.name == "test"
-    assert r.passed is True
-    assert r.message == ""
+def test_constraint_result_defaults_and_report_summaries():
+    result = ConstraintResult(name="test", passed=True)
+    assert result.name == "test"
+    assert result.passed is True
+    assert result.message == ""
 
-
-# ---------------------------------------------------------------------------
-# ConstraintReport
-# ---------------------------------------------------------------------------
-
-
-def test_constraint_report_summaries():
     failing_report = ConstraintReport()
     failing_report.results = [
         ConstraintResult(name="a", passed=True, duration_seconds=1.0, message="ok"),

@@ -73,10 +73,12 @@ def make_snapshot_constraint(
 
 def test_constraint_result_and_report_summary():
     result = constraints_mod.ConstraintResult(name="ok", passed=True)
+    assert result.name == "ok"
+    assert result.passed is True
     assert result.message == ""
     assert result.details == ""
 
-    report = constraints_mod.ConstraintReport(
+    failing_report = constraints_mod.ConstraintReport(
         results=[
             constraints_mod.ConstraintResult(name="a", passed=True, duration_seconds=1.0, message="ok"),
             constraints_mod.ConstraintResult(name="b", passed=False, duration_seconds=2.0, message="nope"),
@@ -84,16 +86,24 @@ def test_constraint_result_and_report_summary():
         all_passed=False,
         total_duration=3.0,
     )
-    summary = report.summary()
+    summary = failing_report.summary()
     assert "[PASS] a" in summary
     assert "[FAIL] b" in summary
     assert "[FAIL] total" in summary
+
+    passing_report = constraints_mod.ConstraintReport(
+        results=[constraints_mod.ConstraintResult(name="a", passed=True, duration_seconds=0.5)],
+        all_passed=True,
+        total_duration=0.5,
+    )
+    assert "[PASS] total" in passing_report.summary()
 
 
 def test_base_constraint_and_json_helpers(tmp_path):
     with pytest.raises(NotImplementedError):
         constraints_mod.BaseConstraint().check()
     assert constraints_mod.BaseConstraint().setup() is None
+    assert constraints_mod.TestSuiteConstraint.__test__ is False
 
     nested_path = tmp_path / "a" / "b" / "data.json"
     constraints_mod._ensure_parent_dir(str(nested_path))
@@ -114,6 +124,20 @@ def test_base_constraint_and_json_helpers(tmp_path):
     assert constraints_mod._load_json_file(str(as_list)) is None
 
     assert constraints_mod._load_json_file(str(tmp_path / "missing.json")) is None
+
+
+def test_run_all_constraints_aggregates_results():
+    report = constraints_mod.run_all_constraints([constraints_mod.TestSuiteConstraint(command="true", timeout=10)])
+    assert report.all_passed is True
+
+    constraints = [
+        constraints_mod.TestSuiteConstraint(command="true", timeout=10),
+        constraints_mod.TestSuiteConstraint(command="false", timeout=10),
+    ]
+    constraints[1].name = "test_suite_2"
+    report = constraints_mod.run_all_constraints(constraints)
+    assert report.all_passed is False
+    assert len(report.results) == 2
 
 
 def test_test_suite_constraint_outcomes(patch_run):
@@ -324,6 +348,21 @@ def test_snapshot_constraint_failure_paths(tmp_path, patch_run, capsys):
     assert "FAILED to generate: boom" in capsys.readouterr().out
 
 
+def test_load_constraints_empty():
+    assert constraints_mod.load_constraints({}) == []
+
+
+def test_load_constraints_test_suite():
+    config = {
+        "constraints": {
+            "test_suite": {"command": "echo test", "timeout": 30},
+        }
+    }
+    loaded = constraints_mod.load_constraints(config)
+    assert len(loaded) == 1
+    assert isinstance(loaded[0], constraints_mod.TestSuiteConstraint)
+
+
 def test_load_constraints_run_all_and_setup_all(tmp_path):
     config = {
         "target_dir": str(tmp_path),
@@ -345,6 +384,11 @@ def test_load_constraints_run_all_and_setup_all(tmp_path):
     assert [constraint.name for constraint in loaded] == ["test_suite", "spec", "snapshot", "coverage"]
     assert loaded[-1].baseline_path.endswith(".autoreduce/coverage_baseline.json")
     assert loaded[-1].timeout == 12
+
+    overridden = constraints_mod.load_constraints(config, workdir="/tmp")
+    assert overridden[0].workdir == "/tmp"
+    assert overridden[2].snapshot_dir == "/tmp/.autoreduce/snapshots"
+    assert overridden[3].baseline_path == "/tmp/.autoreduce/coverage_baseline.json"
 
     report = constraints_mod.run_all_constraints([constraints_mod.TestSuiteConstraint(command="true", timeout=5)])
     assert report.all_passed is True

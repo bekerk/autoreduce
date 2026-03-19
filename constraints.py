@@ -118,6 +118,7 @@ class TestSuiteConstraint(BaseConstraint):
     The tests must all pass for the constraint to be satisfied.
     """
 
+    __test__ = False
     name = "test_suite"
 
     def __init__(self, command: str, timeout: int = 300, workdir: str | None = None):

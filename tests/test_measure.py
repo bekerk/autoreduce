@@ -17,12 +17,28 @@ def write(path: Path, body: str):
 
 
 def test_metric_dataclasses_and_line_scanner():
-    file_metrics = measure_mod.FileMetrics(path="test.py", lines_of_code=10, blank_lines=3, comment_lines=2)
-    assert file_metrics.total_lines == 15
+    file_metrics = measure_mod.FileMetrics(path="test.py")
+    assert file_metrics.path == "test.py"
+    assert file_metrics.lines_of_code == 0
+    assert file_metrics.blank_lines == 0
+    assert file_metrics.comment_lines == 0
+    assert file_metrics.total_lines == 0
+    assert measure_mod.FileMetrics(path="x.py", lines_of_code=10, blank_lines=3, comment_lines=2).total_lines == 15
 
     project_metrics = measure_mod.ProjectMetrics()
     assert project_metrics.num_files == 0
     assert project_metrics.composite_score == 0.0
+    assert project_metrics.total_lines_of_code == 0
+    project_metrics.composite_score = 123.45
+    project_metrics.total_lines_of_code = 100
+    project_metrics.num_files = 3
+    report = measure_mod.format_report(project_metrics)
+    assert "composite_score:" in report
+    assert "123.45" in report
+
+    data = json.loads(measure_mod.format_json(project_metrics))
+    assert data["composite_score"] == 123.45
+    assert data["lines_of_code"] == 100
 
     scanned = measure_mod._scan_lines(
         ["import os", "", "# comment", "value = 1"],
@@ -154,6 +170,9 @@ def test_generic_analysis_variants_and_dispatch(tmp_path):
     [
         pytest.param("foo.py", "python", id="python"),
         pytest.param("bar.js", "javascript", id="javascript"),
+        pytest.param("baz.ts", "typescript", id="typescript"),
+        pytest.param("qux.rs", "rust", id="rust"),
+        pytest.param("thing.go", "go", id="go"),
         pytest.param("demo.ex", "elixir", id="elixir"),
         pytest.param("readme.md", None, id="unknown"),
     ],
@@ -171,6 +190,8 @@ def test_regex_helpers():
     ("path", "expected"),
     [
         pytest.param(".git/config", True, id="git-dir"),
+        pytest.param("node_modules/foo/bar.js", True, id="node-modules"),
+        pytest.param("__pycache__/foo.pyc", True, id="pycache"),
         pytest.param("pkg/demo.egg-info/PKG-INFO", True, id="egg-info"),
         pytest.param("src/main.py", False, id="source-file"),
     ],
@@ -237,6 +258,12 @@ def test_discover_files_include_exclude_and_skips(tmp_path, monkeypatch):
 
 
 def test_measure_project_and_formatters(tmp_path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    empty_project = measure_mod.measure_project(str(empty_dir))
+    assert empty_project.num_files == 0
+    assert empty_project.composite_score == 0.0
+
     write(
         tmp_path / "main.py",
         """

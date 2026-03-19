@@ -36,7 +36,7 @@ from measure import (
 # ---------------------------------------------------------------------------
 
 
-def test_metric_dataclasses():
+def test_metric_dataclasses_and_formatters():
     file_metrics = FileMetrics(path="test.py")
     assert file_metrics.path == "test.py"
     assert file_metrics.lines_of_code == 0
@@ -49,6 +49,16 @@ def test_metric_dataclasses():
     assert project_metrics.num_files == 0
     assert project_metrics.composite_score == 0.0
     assert project_metrics.total_lines_of_code == 0
+    project_metrics.composite_score = 123.45
+    project_metrics.total_lines_of_code = 100
+    project_metrics.num_files = 3
+    report = format_report(project_metrics)
+    assert "composite_score:" in report
+    assert "123.45" in report
+
+    data = json.loads(format_json(project_metrics))
+    assert data["composite_score"] == 123.45
+    assert data["lines_of_code"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -235,25 +245,6 @@ def test_measure_project_variants():
 
         zero_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
         assert measure_project(tmpdir, weights=zero_weights).composite_score == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Format functions
-# ---------------------------------------------------------------------------
-
-
-def test_formatters():
-    pm = ProjectMetrics()
-    pm.composite_score = 123.45
-    pm.total_lines_of_code = 100
-    pm.num_files = 3
-    report = format_report(pm)
-    assert "composite_score:" in report
-    assert "123.45" in report
-
-    data = json.loads(format_json(pm))
-    assert data["composite_score"] == 123.45
-    assert data["lines_of_code"] == 100
 
 
 # ---------------------------------------------------------------------------

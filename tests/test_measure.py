@@ -36,7 +36,7 @@ from measure import (
 # ---------------------------------------------------------------------------
 
 
-def test_metric_dataclasses_and_formatters():
+def test_metric_dataclasses_formatters_and_helpers():
     file_metrics = FileMetrics(path="test.py")
     assert file_metrics.path == "test.py"
     assert file_metrics.lines_of_code == 0
@@ -59,6 +59,34 @@ def test_metric_dataclasses_and_formatters():
     data = json.loads(format_json(project_metrics))
     assert data["composite_score"] == 123.45
     assert data["lines_of_code"] == 100
+
+    assert _detect_language("foo.py") == "python"
+    assert _detect_language("bar.js") == "javascript"
+    assert _detect_language("baz.ts") == "typescript"
+    assert _detect_language("qux.rs") == "rust"
+    assert _detect_language("thing.go") == "go"
+    assert _detect_language("readme.md") is None
+    assert _detect_language("data.json") is None
+
+    source = "if x:\n    for y in z:\n        while True:\n            pass"
+    assert _regex_cyclomatic(source) >= 4  # base + if + for + while
+    assert (
+        _regex_nesting(
+            [
+                "def foo():",
+                "    if True:",
+                "        for i in x:",
+                "            pass",
+                "",
+            ]
+        )
+        >= 2
+    )
+    assert should_skip(".git/config") is True
+    assert should_skip("node_modules/foo/bar.js") is True
+    assert should_skip("__pycache__/foo.pyc") is True
+    assert should_skip("src/main.py") is False
+    assert should_skip("lib/utils.js") is False
 
 
 # ---------------------------------------------------------------------------
@@ -134,41 +162,6 @@ def test_analyze_python_file():
         assert analyze_python_file(path).lines_of_code == 0
     finally:
         os.unlink(path)
-
-
-# ---------------------------------------------------------------------------
-# Language detection
-# ---------------------------------------------------------------------------
-
-
-def test_measure_helpers():
-    assert _detect_language("foo.py") == "python"
-    assert _detect_language("bar.js") == "javascript"
-    assert _detect_language("baz.ts") == "typescript"
-    assert _detect_language("qux.rs") == "rust"
-    assert _detect_language("thing.go") == "go"
-    assert _detect_language("readme.md") is None
-    assert _detect_language("data.json") is None
-
-    source = "if x:\n    for y in z:\n        while True:\n            pass"
-    assert _regex_cyclomatic(source) >= 4  # base + if + for + while
-    assert (
-        _regex_nesting(
-            [
-                "def foo():",
-                "    if True:",
-                "        for i in x:",
-                "            pass",
-                "",
-            ]
-        )
-        >= 2
-    )
-    assert should_skip(".git/config") is True
-    assert should_skip("node_modules/foo/bar.js") is True
-    assert should_skip("__pycache__/foo.pyc") is True
-    assert should_skip("src/main.py") is False
-    assert should_skip("lib/utils.js") is False
 
 
 # ---------------------------------------------------------------------------

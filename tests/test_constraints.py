@@ -54,7 +54,7 @@ def test_constraint_result_defaults_and_report_summaries():
 # ---------------------------------------------------------------------------
 
 
-def test_test_suite_outcomes():
+def test_constraint_backend_outcomes():
     cases = [
         ("echo hello", 10, True, ""),
         ("false", 10, False, ""),
@@ -67,14 +67,7 @@ def test_test_suite_outcomes():
         assert result.name == "test_suite"
         assert message in result.message
 
-
-# ---------------------------------------------------------------------------
-# SpecConstraint
-# ---------------------------------------------------------------------------
-
-
-def test_spec_outcomes():
-    cases = [
+    spec_cases = [
         (
             [
                 {"name": "check1", "command": "true"},
@@ -93,7 +86,7 @@ def test_spec_outcomes():
         ),
     ]
 
-    for specs, passed, message in cases:
+    for specs, passed, message in spec_cases:
         result = SpecConstraint(specs=specs, timeout=10).check()
         assert result.passed is passed
         assert message in result.message
